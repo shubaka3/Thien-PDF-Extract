@@ -31,12 +31,6 @@ TEMP_UPLOAD_DIR = Path(__file__).parent / "temp_uploads"
 TEMP_UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-
-class Message(BaseModel):
-    role: str
-    content: str
-
-
 @app.post("/convert-folder")
 def convert_folder_api(
     folder_path: str = Query(..., description="Đường dẫn thư mục chứa file Office")
@@ -130,10 +124,79 @@ def remove_temp_dir(path: Path):
     except FileNotFoundError:
         pass
 
+def save_and_extract_files(files: List[UploadFile]) -> Path:
+    """
+    Lưu tất cả file upload vào 1 thư mục tạm và trả về path thư mục đó
+    """
+    temp_dir = Path(tempfile.mkdtemp())
+    for file in files:
+        filename = Path(file.filename).name
+        file_path = temp_dir / filename
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        # Nếu file zip thì giải nén vào temp_dir
+        if filename.lower().endswith(".zip"):
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            file_path.unlink()  # xóa zip gốc sau khi giải nén
+    return temp_dir
+
+# ----------------------
+# Convert + Merge + Download
+# ----------------------
 @app.post("/convert-extract-download")
-def convert_extract_download_api(
-    folder_path: str = Query(..., description="Đường dẫn chứa file txt, doc, pptx, pdf...")
+async def convert_extract_download_api(
+    files: List[UploadFile] = File(..., description="Upload nhiều file hoặc 1 file zip chứa folder")
 ):
+    # Tạo thư mục tạm duy nhất cho request này
+    temp_dir = save_and_extract_files(files)
+
+    try:
+        pdf_dir = temp_dir / "converted_pdfs"
+        text_pdf_dir = temp_dir / "text_only_pdfs"
+        merged_text_pdf_path = temp_dir / "merged_text_only.pdf"
+        zip_path = temp_dir / "result.zip"  # Đặt zip trong temp_dir
+
+        # Convert Office -> PDF
+        converted_pdfs = convert_office_folder_to_pdf(temp_dir, pdf_dir)
+
+        # Lấy các PDF đã có sẵn trong folder upload
+        existing_pdfs = list(temp_dir.glob("*.pdf"))
+        all_pdfs_for_extraction = converted_pdfs + existing_pdfs
+
+        text_only_pdfs = []
+        for pdf_file in all_pdfs_for_extraction:
+            texts = extract_text_from_pdf(pdf_file)
+            text_pdf_dir.mkdir(parents=True, exist_ok=True)
+            output_text_pdf = save_texts_to_pdf(texts, text_pdf_dir, pdf_file.stem)
+            text_only_pdfs.append(output_text_pdf)
+
+        if not text_only_pdfs:
+            return {"error": "Không tìm thấy file PDF hoặc Office hợp lệ để trích xuất văn bản."}
+
+        # Merge các text-only PDFs
+        merge_pdfs(text_only_pdfs, merged_text_pdf_path)
+
+        # Tạo zip chứa merged + các file text-only
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            if merged_text_pdf_path.exists():
+                zipf.write(merged_text_pdf_path, arcname="merged_text_only.pdf")
+            for text_pdf in text_pdf_dir.glob("*.pdf"):
+                zipf.write(text_pdf, arcname=f"text_only_pdfs/{text_pdf.name}")
+
+        # Trả file zip và xóa toàn bộ temp_dir sau khi gửi xong
+        return FileResponse(
+            zip_path,
+            media_type='application/zip',
+            filename="result.zip",
+            background=BackgroundTask(remove_temp_dir, temp_dir)
+        )
+
+    except Exception as e:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+        return {"error": str(e)}
+
     # Tạo thư mục tạm duy nhất cho request này
     temp_dir = Path(tempfile.mkdtemp())
 

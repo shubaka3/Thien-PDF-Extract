@@ -12,6 +12,8 @@ from convert import convert_office_folder_to_pdf, merge_pdfs, extract_text_from_
 import zipfile
 import tempfile
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
+
 
 from convert import (
     convert_office_folder_to_pdf,
@@ -120,32 +122,37 @@ def extract_pdf_api(
     except Exception as e:
         return {"error": str(e)}
 
+
+def remove_temp_dir(path: Path):
+    """Xóa toàn bộ thư mục tạm."""
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        pass
+
 @app.post("/convert-extract-download")
 def convert_extract_download_api(
     folder_path: str = Query(..., description="Đường dẫn chứa file txt, doc, pptx, pdf...")
 ):
-    # Create temporary directory
+    # Tạo thư mục tạm duy nhất cho request này
     temp_dir = Path(tempfile.mkdtemp())
 
     try:
-        pdf_dir = temp_dir / "converted_pdfs" # Store converted PDFs
-        text_pdf_dir = temp_dir / "text_only_pdfs" # Store text-only PDFs
-        merged_text_pdf_path = temp_dir / "merged_text_only.pdf" # Path for the merged text-only PDF
+        pdf_dir = temp_dir / "converted_pdfs"
+        text_pdf_dir = temp_dir / "text_only_pdfs"
+        merged_text_pdf_path = temp_dir / "merged_text_only.pdf"
+        zip_path = temp_dir / "result.zip"  # Đặt zip trong temp_dir
 
         # Convert Office -> PDF
         converted_pdfs = convert_office_folder_to_pdf(folder_path, pdf_dir)
 
-        # Existing PDFs in the source folder
+        # Lấy các PDF đã có sẵn
         existing_pdfs = list(Path(folder_path).glob("*.pdf"))
-
-        # Process all PDFs (converted and existing) to extract text
         all_pdfs_for_extraction = converted_pdfs + existing_pdfs
-        
-        # Extract text from all PDFs and create text-only PDFs in text_pdf_dir
+
         text_only_pdfs = []
         for pdf_file in all_pdfs_for_extraction:
             texts = extract_text_from_pdf(pdf_file)
-            # Ensure the output directory for text-only PDFs exists
             text_pdf_dir.mkdir(parents=True, exist_ok=True)
             output_text_pdf = save_texts_to_pdf(texts, text_pdf_dir, pdf_file.stem)
             text_only_pdfs.append(output_text_pdf)
@@ -153,29 +160,25 @@ def convert_extract_download_api(
         if not text_only_pdfs:
             return {"error": "Không tìm thấy file PDF hoặc Office hợp lệ để trích xuất văn bản."}
 
-        # Merge only the text-only PDFs
         merge_pdfs(text_only_pdfs, merged_text_pdf_path)
 
-        # Create zip file in a fixed directory
-        zip_path = Path("result.zip")  # Save in the server's running directory
+        # Tạo zip chứa merged + các file text-only
         with zipfile.ZipFile(zip_path, 'w') as zipf:
             if merged_text_pdf_path.exists():
                 zipf.write(merged_text_pdf_path, arcname="merged_text_only.pdf")
-            
-            # Add all individual text-only PDFs to the zip
             for text_pdf in text_pdf_dir.glob("*.pdf"):
                 zipf.write(text_pdf, arcname=f"text_only_pdfs/{text_pdf.name}")
 
-        # Return the zip file
+        # Trả file zip và xóa toàn bộ temp_dir sau khi gửi xong
         return FileResponse(
             zip_path,
             media_type='application/zip',
-            filename="result.zip"
+            filename="result.zip",
+            background=BackgroundTask(remove_temp_dir, temp_dir)
         )
 
     except Exception as e:
-        return {"error": str(e)}
-    finally:
-        # Clean up temporary directory
+        # Nếu lỗi, xóa ngay temp_dir
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
+        return {"error": str(e)}

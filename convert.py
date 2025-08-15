@@ -6,6 +6,7 @@ from typing import List
 from PyPDF2 import PdfMerger, PdfReader
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
+import shutil
 
 def convert_office_folder_to_pdf(folder_path: str, output_dir: str) -> List[Path]:
     """
@@ -23,7 +24,11 @@ def convert_office_folder_to_pdf(folder_path: str, output_dir: str) -> List[Path
     if not office_files:
         return []
 
-    LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.exe"
+    # LIBREOFFICE_PATH = r"C:\Program Files\LibreOffice\program\soffice.exe"
+    LIBREOFFICE_PATH = shutil.which("soffice")
+    if not LIBREOFFICE_PATH:
+        raise RuntimeError("LibreOffice not found. Please install it or ensure 'soffice' is in PATH.")
+        
     pdf_files = []
 
     for office_file in office_files:

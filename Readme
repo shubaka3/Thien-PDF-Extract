@@ -1,2 +1,23 @@
 # Chạy lệnh
 uvicorn main:app --host 0.0.0.0 --port 8000
+hướng dẫn triển khai service convert các file về pdf và xuất file zip để chuẩn hóa dữ liệu
+trên unbuntu:
+1 → cần libreoffice để có lệnh thực hiện convert
+sudo apt update && \
+sudo apt install -y libreoffice libreoffice-core libreoffice-common \
+libreoffice-writer libreoffice-calc libreoffice-impress
+
+2 → kiểm tra lại
+libreoffice --version
+3 → tạo thư mục trên unbuntu sau đó
+git clone https://github.com/shubaka3/Thien-PDF-Extract.git .
+
+4 → tạo máy ảo
+python3 -m venv venv
+5 → activate máy ảo
+source venv/bin/activate
+6 → tải thư viện 
+pip install -r requirements.txt
+7 → khởi động 
+uvicorn main:app --host 0.0.0.0 --port 5001
+

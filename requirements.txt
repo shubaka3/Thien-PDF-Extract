@@ -4,3 +4,7 @@ requests
 python-multipart
 PyPDF2
 reportlab
+python-docx
+python-pptx
+openpyxl
+
